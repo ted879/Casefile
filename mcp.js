@@ -6,6 +6,7 @@ const express = require('express');
 const { db } = require('./db');
 const ops = require('./ops');
 const { renderBrief, renderQueue, renderExport, renderCitations } = require('./render');
+const research = require('./research');
 
 const PROTOCOL = '2025-06-18';
 const S = (props, required) => ({ type: 'object', properties: props, required: required || [] });
@@ -79,7 +80,7 @@ const TOOLS = [
   { name: 'casefile_case',
     description: 'Create a case, or update its title, subject or open question.',
     inputSchema: S({ slug: str(''), title: str(''), subject: str(''), question: str('the question the case exists to answer') }, ['slug', 'title']) }
-];
+].concat(research.TOOLS);
 
 const text = t => ({ content: [{ type: 'text', text: t }] });
 const json = o => text(JSON.stringify(o, null, 2));
@@ -90,7 +91,7 @@ function mustCase(slug) {
   return c;
 }
 
-function callTool(name, a) {
+async function callTool(name, a) {
   a = a || {};
   switch (name) {
     case 'casefile_brief':   return text(renderBrief(mustCase(a.case)));
@@ -116,11 +117,15 @@ function callTool(name, a) {
       if (!p) throw new Error('no such person: ' + a.person);
       return text(renderCitations(c, p));
     }
-    default: throw new Error('unknown tool: ' + name);
+    default: {
+      const r = await research.call(name, a);
+      if (r !== null) return text(r);
+      throw new Error('unknown tool: ' + name);
+    }
   }
 }
 
-function handle(msg) {
+async function handle(msg) {
   const id = msg && msg.id;
   const m = msg && msg.method;
   if (m === 'initialize') {
@@ -135,7 +140,7 @@ function handle(msg) {
   if (m === 'tools/call') {
     const p = msg.params || {};
     try {
-      return { jsonrpc: '2.0', id, result: callTool(p.name, p.arguments) };
+      return { jsonrpc: '2.0', id, result: await callTool(p.name, p.arguments) };
     } catch (e) {
       return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: ' + e.message }], isError: true } };
     }
@@ -156,14 +161,14 @@ function router(WRITE_TOKEN) {
     }
     next();
   };
-  const post = (req, res) => {
+  const post = async (req, res) => {
     const body = req.body;
     const msgs = Array.isArray(body) ? body : [body];
     const out = [];
     for (const msg of msgs) {
       if (!msg || typeof msg !== 'object') continue;
       if (msg.id === undefined || msg.id === null) continue;   // notification: no reply
-      out.push(handle(msg));
+      out.push(await handle(msg));
     }
     if (!out.length) return res.status(202).end();
     res.json(Array.isArray(body) ? out : out[0]);
