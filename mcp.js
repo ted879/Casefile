@@ -28,7 +28,7 @@ const TOOLS = [
       letter: str('claim one specific item by its letter instead of the first open one')
     }, ['case', 'agent']) },
   { name: 'casefile_entry',
-    description: 'Append an entry to the log. The number is assigned server-side and entries are immutable - a correction is a new entry, never an edit. End every run with this, even a run that found nothing.',
+    description: 'Append an entry to the log. The number is assigned server-side and entries are immutable - a correction is a new entry, never an edit. End every run with this, even a run that found nothing. Use kind="run" for a run report or any bookkeeping; kind="consolidation" REPLACES the working brief and hides every earlier entry from it, so use it only when the entry carries the whole standing state.',
     inputSchema: S({
       case: str('case slug'),
       agent: str('Claude, ChatGPT or Ted'),
@@ -75,7 +75,7 @@ const TOOLS = [
     description: 'Get every source found for one person, formatted for pasting onto a genealogy profile.',
     inputSchema: S({ case: str('case slug'), person: str('person slug') }, ['case', 'person']) },
   { name: 'casefile_export',
-    description: 'Full text of every entry in the case, for archiving outside this service.',
+    description: 'Full text of every entry in the case, including superseded consolidations, for archiving outside this service or for recovering something the current brief does not carry.',
     inputSchema: S({ case: str('case slug') }, ['case']) },
   { name: 'casefile_case',
     description: 'Create a case, or update its title, subject or open question.',
@@ -100,7 +100,20 @@ async function callTool(name, a) {
     case 'casefile_case':    return json(ops.upsertCase(a));
     case 'casefile_entry': {
       const r = ops.addEntry(a);
-      return text(`Filed as entry ${r.part_no}. Immutable - a correction is a new entry.`);
+      let msg = `Filed as entry ${r.part_no}. Immutable - a correction is a new entry.`;
+      if (String(a.kind || '').toLowerCase() === 'consolidation') {
+        msg += '\n\n*** YOU JUST FILED A CONSOLIDATION. IT HAS REPLACED THE PREVIOUS ONE ' +
+          'IN casefile_brief, AND EVERY ENTRY BEFORE IT IS NOW HIDDEN FROM THE BRIEF. ***\n' +
+          'A consolidation is not a summary of your run - it is the whole working state, ' +
+          'and anything standing that it does not carry becomes invisible to every future ' +
+          'run. This has already happened once: a migration filed as a consolidation ' +
+          'silently dropped the instrument notes and access map.\n' +
+          'CHECK NOW with casefile_brief that your entry carries everything still standing ' +
+          '- identity anchors, spelling and folding rules, the access map, instrument ' +
+          'behaviour, the standing method rules. If it does not, file another entry that ' +
+          'merges them back in. A run report or a bookkeeping entry should be kind="run".';
+      }
+      return text(msg);
     }
     case 'casefile_claim': {
       const item = ops.claim(a);
