@@ -30,7 +30,8 @@ function renderBrief(c) {
   L.push(`GENERATED: ${new Date().toISOString()}`, '');
   L.push('HOW TO USE THIS BRIEF');
   L.push('  This is the whole of what you need to read: the newest consolidation,');
-  L.push('  every entry written since, and the live queue. Do not reconstruct state');
+  L.push('  every entry written since, the live queue, and a pointer to anything an');
+  L.push('  earlier consolidation carried. Do not reconstruct state');
   L.push('  from anywhere else. Claim an item before working. End your run by');
   L.push('  appending an entry. Entries are immutable — a correction is a new entry.');
   L.push('', '='.repeat(70));
@@ -39,6 +40,26 @@ function renderBrief(c) {
     L.push('='.repeat(70), cons.body);
   } else {
     L.push('NO CONSOLIDATION YET.');
+  }
+  // A consolidation supersedes the ones before it, and hides every entry that
+  // preceded it. That is intended for state, but standing content - method rules,
+  // access maps, instrument behaviour - has been silently dropped this way once
+  // already. Never let a superseded consolidation become invisible: name it here
+  // so a run knows to call casefile_export if it needs what it carried.
+  if (cons) {
+    const older = db.prepare(`SELECT part_no, agent, stamp, headline FROM entries
+      WHERE case_slug=? AND kind='consolidation' AND part_no<? ORDER BY part_no DESC`)
+      .all(c.slug, cons.part_no);
+    if (older.length) {
+      L.push('', '-'.repeat(70));
+      L.push(`SUPERSEDED CONSOLIDATIONS (${older.length}) — NOT shown above.`);
+      L.push('If the consolidation above does not carry something you expected to');
+      L.push('find, it may be in one of these. Read them with casefile_export.');
+      for (const o of older) {
+        L.push(`  entry ${o.part_no} — ${o.agent} — ${o.stamp}${o.headline ? ' — ' + o.headline : ''}`);
+      }
+      L.push('-'.repeat(70));
+    }
   }
   const since = cons
     ? db.prepare('SELECT * FROM entries WHERE case_slug=? AND part_no>? ORDER BY part_no ASC').all(c.slug, cons.part_no)
