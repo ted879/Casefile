@@ -1,0 +1,14 @@
+{
+  "name": "casefile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Append-only multi-agent research log with a claim queue and a citable evidence archive.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.19.2"
+  }
+}
