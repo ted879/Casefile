@@ -51,6 +51,50 @@ CREATE TABLE IF NOT EXISTS queue_items (
   UNIQUE(case_slug, letter)
 );
 
+-- A queue item's progress, as rows rather than as prose inside detail.
+-- Marking one step done used to mean re-sending the whole detail body, so runs
+-- wrote status into the TITLE instead and the titles became paragraphs.
+CREATE TABLE IF NOT EXISTS queue_steps (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_slug   TEXT NOT NULL REFERENCES cases(slug),
+  letter      TEXT NOT NULL,
+  step        TEXT NOT NULL,
+  title       TEXT,
+  status      TEXT NOT NULL DEFAULT 'open',
+  note        TEXT,
+  rank        INTEGER NOT NULL DEFAULT 100,
+  updated_by  TEXT,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(case_slug, letter, step)
+);
+
+-- DOCTRINE is the case's standing state: identity anchors, method rules, the
+-- access map, spelling and folding rules, instrument behaviour. It used to live
+-- inside whichever entry was marked kind='consolidation', which meant filing a
+-- new consolidation silently hid it -- that has already happened once and cost
+-- the susz case an entire recovery entry. Doctrine is mutable and always
+-- rendered in the brief, so it can never be hidden by a later entry.
+CREATE TABLE IF NOT EXISTS doctrine (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_slug   TEXT NOT NULL REFERENCES cases(slug),
+  section     TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  rank        INTEGER NOT NULL DEFAULT 100,
+  updated_by  TEXT,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(case_slug, section)
+);
+
+-- Mutable, but nothing is ever lost: every set files the previous body here.
+CREATE TABLE IF NOT EXISTS doctrine_history (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_slug   TEXT NOT NULL,
+  section     TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  updated_by  TEXT,
+  replaced_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS exhausted (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   case_slug   TEXT NOT NULL REFERENCES cases(slug),
@@ -96,6 +140,8 @@ CREATE TABLE IF NOT EXISTS evidence (
 CREATE INDEX IF NOT EXISTS idx_entries_case  ON entries(case_slug, part_no);
 CREATE INDEX IF NOT EXISTS idx_queue_case    ON queue_items(case_slug, status, rank);
 CREATE INDEX IF NOT EXISTS idx_evidence_pers ON evidence(person_id);
+CREATE INDEX IF NOT EXISTS idx_steps_item    ON queue_steps(case_slug, letter, rank);
+CREATE INDEX IF NOT EXISTS idx_doctrine_case ON doctrine(case_slug, rank);
 `);
 
 module.exports = { db, DB_PATH };

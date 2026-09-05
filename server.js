@@ -3,7 +3,8 @@ const express = require('express');
 const { db, DB_PATH } = require('./db');
 const ops = require('./ops');
 const mcp = require('./mcp');
-const { renderBrief, renderQueue, renderExport, renderCitations } = require('./render');
+const { renderBrief, renderQueue, renderQueueItem, renderDoctrine,
+        renderEntry, renderExport, renderCitations } = require('./render');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -35,6 +36,8 @@ app.post('/api/case',      requireToken, wrap(ops.upsertCase));
 app.post('/api/entry',     requireToken, wrap(ops.addEntry));
 app.post('/api/claim',     requireToken, wrap(ops.claim));
 app.post('/api/queue',     requireToken, wrap(ops.upsertQueueItem));
+app.post('/api/step',      requireToken, wrap(ops.upsertStep));
+app.post('/api/doctrine',  requireToken, wrap(ops.setDoctrine));
 app.post('/api/exhausted', requireToken, wrap(ops.addExhausted));
 app.post('/api/person',    requireToken, wrap(ops.upsertPerson));
 app.post('/api/evidence',  requireToken, wrap(ops.addEvidence));
@@ -52,8 +55,29 @@ function requireReadKey(req, res) {
 }
 const asText = (res, body) => res.type('text/plain; charset=utf-8').send(body);
 
-app.get('/c/:case/brief',  (q, s) => { const c = requireReadKey(q, s); if (c) asText(s, renderBrief(c)); });
-app.get('/c/:case/queue',  (q, s) => { const c = requireReadKey(q, s); if (c) asText(s, renderQueue(c)); });
+// The brief is bounded by default. ?full=1 restores the old unbounded output,
+// ?detail=1 does the same for the queue.
+app.get('/c/:case/brief', (q, s) => {
+  const c = requireReadKey(q, s);
+  if (c) asText(s, renderBrief(c, { full: q.query.full === '1', since: q.query.since, full_entries: q.query.full_entries }));
+});
+app.get('/c/:case/queue', (q, s) => {
+  const c = requireReadKey(q, s);
+  if (c) asText(s, renderQueue(c, { detail: q.query.detail === '1' }));
+});
+app.get('/c/:case/doctrine', (q, s) => { const c = requireReadKey(q, s); if (c) asText(s, renderDoctrine(c)); });
+app.get('/c/:case/entry/:n', (q, s) => {
+  const c = requireReadKey(q, s);
+  if (!c) return;
+  try { asText(s, renderEntry(c, ops.getEntry({ case: c.slug, entry: q.params.n }))); }
+  catch (e) { s.status(404).type('text/plain').send(e.message); }
+});
+app.get('/c/:case/item/:letter', (q, s) => {
+  const c = requireReadKey(q, s);
+  if (!c) return;
+  try { asText(s, renderQueueItem(ops.getQueueItem({ case: c.slug, letter: q.params.letter }))); }
+  catch (e) { s.status(404).type('text/plain').send(e.message); }
+});
 app.get('/c/:case/export', (q, s) => { const c = requireReadKey(q, s); if (c) asText(s, renderExport(c)); });
 
 /* ------------------------------------------------------------- human UI */
@@ -99,6 +123,7 @@ app.get('/c/:case', (req, res) => {
 <p class="mut">${esc(c.subject || '')}</p>
 ${c.question ? `<p><strong>Still open:</strong> ${esc(c.question)}</p>` : ''}
 <p class="mut">${nEnt} entries &middot; ${nEv} pieces of evidence &middot; <a href="/c/${esc(c.slug)}/paste">paste an entry</a></p>
+<h2>Doctrine</h2><pre>${esc(renderDoctrine(c))}</pre>
 <h2>Queue</h2><pre>${esc(renderQueue(c))}</pre>
 <h2>People</h2>
 <table><tr><th>Name</th><th>Dates</th><th>Relation</th><th>Status</th></tr>
