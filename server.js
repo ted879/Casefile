@@ -4,7 +4,8 @@ const { db, DB_PATH } = require('./db');
 const ops = require('./ops');
 const mcp = require('./mcp');
 const { renderBrief, renderQueue, renderQueueItem, renderDoctrine,
-        renderEntry, renderExport, renderCitations } = require('./render');
+        renderEntry, renderExport, renderCitations, renderLife,
+        renderRoster } = require('./render');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -41,6 +42,9 @@ app.post('/api/doctrine',  requireToken, wrap(ops.setDoctrine));
 app.post('/api/exhausted', requireToken, wrap(ops.addExhausted));
 app.post('/api/person',    requireToken, wrap(ops.upsertPerson));
 app.post('/api/evidence',  requireToken, wrap(ops.addEvidence));
+app.post('/api/fact',      requireToken, wrap(ops.upsertFact));
+app.post('/api/link',      requireToken, wrap(ops.linkPerson));
+app.post('/api/source',    requireToken, wrap(ops.addSource));
 
 /* ------------------------------------------------------------- read URLs */
 function requireReadKey(req, res) {
@@ -77,6 +81,19 @@ app.get('/c/:case/item/:letter', (q, s) => {
   if (!c) return;
   try { asText(s, renderQueueItem(ops.getQueueItem({ case: c.slug, letter: q.params.letter }))); }
   catch (e) { s.status(404).type('text/plain').send(e.message); }
+});
+app.get('/c/:case/life/:person', (q, s) => {
+  const c = requireReadKey(q, s);
+  if (!c) return;
+  try {
+    const across = q.query.across === '1';
+    const life = ops.getLife({ case: c.slug, person: q.params.person, across_cases: across });
+    asText(s, renderLife(c, life, ops.lifeProgress(c.slug, q.params.person, across), { order: ops.FACT_ORDER }));
+  } catch (e) { s.status(404).type('text/plain').send(e.message); }
+});
+app.get('/c/:case/lives', (q, s) => {
+  const c = requireReadKey(q, s);
+  if (c) asText(s, renderRoster(c, ops.lifeRoster(c.slug)));
 });
 app.get('/c/:case/export', (q, s) => { const c = requireReadKey(q, s); if (c) asText(s, renderExport(c)); });
 
@@ -147,7 +164,8 @@ app.get('/c/:case/p/:person', (req, res) => {
 <p class="mut">${esc([p.born, p.died].filter(Boolean).join(' - '))}${p.relation ? ' &middot; ' + esc(p.relation) : ''} &middot; <span class="tag">${esc(p.status)}</span></p>
 ${p.aka ? `<p class="mut">Also recorded as: ${esc(p.aka)}</p>` : ''}
 ${p.notes ? `<p>${esc(p.notes)}</p>` : ''}
-<p><a href="/c/${esc(c.slug)}/p/${esc(p.slug)}/citations.txt">citations.txt</a> &mdash; ready to paste onto a tree profile</p>
+<p><a href="/c/${esc(c.slug)}/p/${esc(p.slug)}/citations.txt">citations.txt</a> &mdash; ready to paste onto a tree profile
+&middot; <a href="/c/${esc(c.slug)}/life/${esc(p.slug)}">life summary</a></p>
 <h2>Evidence (${ev.length})</h2>
 ${ev.map(e => `<div class="item"><span class="tag">${esc(e.confidence)}${e.record_date ? ' &middot; ' + esc(e.record_date) : ''}${e.kind ? ' &middot; ' + esc(e.kind) : ''}</span>
 <div><strong>${esc(e.asserts)}</strong></div>

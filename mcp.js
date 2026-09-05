@@ -6,7 +6,8 @@ const express = require('express');
 const { db } = require('./db');
 const ops = require('./ops');
 const { renderBrief, renderQueue, renderQueueItem, renderDoctrine,
-        renderEntry, renderExport, renderCitations } = require('./render');
+        renderEntry, renderExport, renderCitations, renderLife,
+        renderRoster } = require('./render');
 const research = require('./research');
 
 const PROTOCOL = '2025-06-18';
@@ -92,6 +93,45 @@ const TOOLS = [
   { name: 'casefile_exhausted_read',
     description: 'Read one do-not-repeat note in full. The brief trims these to keep itself bounded; this returns the whole coverage statement.',
     inputSchema: S({ case: str('case slug'), id: num('the note id shown in the brief, e.g. 122') }, ['case', 'id']) },
+  { name: 'casefile_fact_upsert',
+    description: 'Record ONE fact of ONE person\'s life, with the coverage that settled it. This is the schedule that makes "exhausted" a countable condition instead of a feeling: a person is exhausted when no fact in the vocabulary is still UNSEARCHED. A null is a RESULT and belongs here with status SEARCHED_NULL and its coverage — silence is not a null. A fact that cannot apply (naturalisation for someone who never emigrated) is status NA, also not silence.',
+    inputSchema: S({
+      case: str('case slug'), person: str('person slug'),
+      fact: str('one of: ' + ops.FACT_ORDER.join(' | ')),
+      seq: num('0 (default) is the fact itself, or the verdict on a repeatable category. 1..n are instances — marriage 1, marriage 2, child 1, 2, 3. Repeatable: ' + [...ops.FACT_REPEATABLE].join(', ')),
+      status: str('UNSEARCHED | SEARCHED_NULL | FOUND | CONFLICTED | NA'),
+      value: str('the answer in plain words, e.g. "31 March 1924, Baden, after a long illness"'),
+      date: str('date of the event, as precise as the record is'),
+      place: str('place of the event'),
+      confidence: str('VERIFIED | STRONG LEAD | CANDIDATE | DISPROVEN'),
+      coverage: str('REQUIRED for a SEARCHED_NULL: exact corpus, exact string, date range, results reported, results read, EXHAUSTED or SAMPLED'),
+      evidence_ids: str('comma-separated casefile_evidence ids supporting this'),
+      entry_id: num('the entry that established it'), agent: str('who recorded it')
+    }, ['case', 'person', 'fact']) },
+  { name: 'casefile_life',
+    description: 'The life summary of one person: every fact in the schedule with its status, value, confidence and — for a null — the coverage that closed it, then every source attached to them, then what is still unsearched. That last list IS the remaining work on that person. Call with a case but no person to get the roster instead: who is registered and how far each life has got.',
+    inputSchema: S({
+      case: str('case slug'), person: str('person slug — omit for the roster of everyone'),
+      across_cases: bool('gather facts and sources from every case this person is linked into')
+    }, ['case']) },
+  { name: 'casefile_person_link',
+    description: 'Declare that a person registered in two cases is ONE person — the subject of their own case and a collateral in another. Evidence keeps living in the case that found it; casefile_life and casefile_citations with across_cases:true then gather it all. Without this, the same human becomes two records that drift apart.',
+    inputSchema: S({
+      case: str('case slug of the first record'), person: str('person slug in that case'),
+      to_case: str('case slug of the second record'), to_person: str('person slug in that case'),
+      agent: str('who linked them')
+    }, ['case', 'person', 'to_case', 'to_person']) },
+  { name: 'casefile_source_add',
+    description: 'Add a repository host to THIS CASE\'s source allowlist, so source_fetch and source_reachability will use it when called with that case. The built-in allowlist is entirely Central European because that is where this investigation started — a case about someone who emigrated needs different repositories. Every addition records who made it and is named in reachability output, so a widened allowlist is visible rather than silent. Add a host because the case genuinely needs that archive, not to make the fetcher general.',
+    inputSchema: S({
+      case: str('case slug'), host: str('bare hostname, e.g. catalog.archives.gov'),
+      probe_url: str('URL for source_reachability to probe; defaults to https://<host>/'),
+      note: str('what it is, in a few words — this is what the reachability report prints'),
+      agent: str('who added it')
+    }, ['case', 'host']) },
+  { name: 'casefile_sources',
+    description: 'List the extra source hosts this case has added on top of the built-in allowlist, with who added each and why.',
+    inputSchema: S({ case: str('case slug') }, ['case']) },
   { name: 'casefile_person',
     description: 'Register or update a person - family or an excluded same-name individual. Evidence attaches to people.',
     inputSchema: S({
@@ -99,6 +139,7 @@ const TOOLS = [
       display_name: str('name as usually written'), aka: str('spelling variants seen in records'),
       born: str('e.g. c.1875'), died: str('e.g. 1967'), relation: str('e.g. mother of subject'),
       status: str('family | excluded | unknown'), tree_id: str('FamilySearch or other tree id'),
+      global_id: str('shared identity key when this person also exists in another case — usually set with casefile_person_link instead'),
       notes: str('')
     }, ['case', 'person', 'display_name']) },
   { name: 'casefile_evidence',
@@ -114,8 +155,9 @@ const TOOLS = [
       accessed_at: str('YYYY-MM-DD'), entry_id: num('')
     }, ['case', 'person', 'asserts', 'source_title']) },
   { name: 'casefile_citations',
-    description: 'Get every source found for one person, formatted for pasting onto a genealogy profile.',
-    inputSchema: S({ case: str('case slug'), person: str('person slug') }, ['case', 'person']) },
+    description: 'Get every source found for one person, formatted for pasting onto a genealogy profile. casefile_life gives the same sources plus the fact schedule around them.',
+    inputSchema: S({ case: str('case slug'), person: str('person slug'),
+      across_cases: bool('include sources filed in every case this person is linked into') }, ['case', 'person']) },
   { name: 'casefile_export',
     description: 'Full text of every entry in the case, including superseded consolidations, for archiving outside this service or for recovering something the current brief does not carry.',
     inputSchema: S({ case: str('case slug') }, ['case']) },
@@ -195,12 +237,27 @@ async function callTool(name, a) {
       if (!item) return text('Nothing open in those lanes. Say so plainly in your entry and keep the run short.');
       return json(item);
     }
+    case 'casefile_fact_upsert': { mustCase(a.case); return json(ops.upsertFact(a)); }
+    case 'casefile_life': {
+      const c = mustCase(a.case);
+      if (!a.person) return text(renderRoster(c, ops.lifeRoster(a.case)));
+      const life = ops.getLife(a);
+      const progress = ops.lifeProgress(a.case, a.person, a.across_cases);
+      return text(renderLife(c, life, progress, { order: ops.FACT_ORDER }));
+    }
+    case 'casefile_person_link': { mustCase(a.case); mustCase(a.to_case); return json(ops.linkPerson(a)); }
+    case 'casefile_source_add':  { mustCase(a.case); return json(ops.addSource(a)); }
+    case 'casefile_sources':     { mustCase(a.case); return json(ops.listSources(a.case)); }
     case 'casefile_queue_upsert': return json(ops.upsertQueueItem(a));
     case 'casefile_exhausted':    return json(ops.addExhausted(a));
     case 'casefile_person':       return json(ops.upsertPerson(a));
     case 'casefile_evidence':     return json(ops.addEvidence(a));
     case 'casefile_citations': {
       const c = mustCase(a.case);
+      if (a.across_cases) {
+        const life = ops.getLife(a);
+        return text(renderLife(c, life, ops.lifeProgress(a.case, a.person, true), { order: ops.FACT_ORDER }));
+      }
       const p = db.prepare('SELECT * FROM persons WHERE case_slug=? AND slug=?').get(c.slug, a.person);
       if (!p) throw new Error('no such person: ' + a.person);
       return text(renderCitations(c, p));
@@ -220,7 +277,7 @@ async function handle(msg) {
     return { jsonrpc: '2.0', id, result: {
       protocolVersion: (msg.params && msg.params.protocolVersion) || PROTOCOL,
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: 'casefile', version: '1.1.0' }
+      serverInfo: { name: 'casefile', version: '1.2.0' }
     } };
   }
   if (m === 'ping') return { jsonrpc: '2.0', id, result: {} };

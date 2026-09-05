@@ -233,6 +233,96 @@ function renderBrief(c, opts = {}) {
   return out;
 }
 
+// A life, rendered from the fact schedule plus the citations. This is the
+// deliverable the schedule exists to produce: what is known, what was looked
+// for and not found (with the coverage), and what nobody has looked for yet.
+function renderLife(c, life, progress, opts = {}) {
+  const p = life.person;
+  const L = [];
+  const dates = [p.born, p.died].filter(Boolean).join(' – ');
+  L.push(`LIFE — ${p.display_name}`);
+  if (dates) L.push(dates);
+  if (p.relation) L.push(p.relation);
+  if (p.aka) L.push(`Also recorded as: ${p.aka}`);
+  if (life.group.length > 1)
+    L.push(`One person across ${life.group.length} cases: ${life.group.map(g => g.case_slug + '/' + g.slug).join(', ')}`);
+  if (p.notes) L.push('', p.notes);
+
+  const byFact = new Map();
+  for (const f of life.facts) {
+    if (!byFact.has(f.fact)) byFact.set(f.fact, []);
+    byFact.get(f.fact).push(f);
+  }
+
+  L.push('', rule(70));
+  L.push(`FACT SCHEDULE — ${progress.answered} found, ${progress.searched_null} searched and null, ` +
+         `${progress.not_applicable} n/a, ${progress.conflicted} conflicted, ${progress.open} never looked for`);
+  L.push(rule(70));
+  for (const fact of opts.order) {
+    const rows = (byFact.get(fact) || []).slice().sort((a, b) => a.seq - b.seq);
+    const head = rows.find(r => r.seq === 0);
+    const st = head ? head.status : 'UNSEARCHED';
+    const bits = [];
+    if (head) {
+      if (head.value) bits.push(head.value);
+      else if (head.date || head.place) bits.push([head.date, head.place].filter(Boolean).join(', '));
+      if (head.confidence) bits.push('[' + head.confidence + ']');
+    }
+    L.push(`  ${fact.padEnd(15)} ${st.padEnd(14)} ${bits.join('  ') || '—'}`);
+    if (head && head.status === 'SEARCHED_NULL' && head.coverage)
+      L.push(`  ${' '.repeat(15)} ${' '.repeat(14)} coverage: ${oneLine(head.coverage, 400)}`);
+    for (const r of rows.filter(r => r.seq > 0)) {
+      const sub = [r.value, [r.date, r.place].filter(Boolean).join(', '), r.confidence ? '[' + r.confidence + ']' : '']
+        .filter(Boolean).join('  ');
+      L.push(`  ${' '.repeat(15)} ${String(r.seq).padStart(2)}. ${sub || '—'}`);
+    }
+  }
+
+  L.push('', rule(70));
+  if (progress.exhausted) {
+    L.push('THIS PERSON IS EXHAUSTED. Every fact in the vocabulary is FOUND, searched');
+    L.push('and null with its coverage stated, or explicitly not applicable.');
+  } else {
+    L.push(`NOT EXHAUSTED. ${progress.still_open.length} facts have never been searched or are in conflict:`);
+    L.push('  ' + progress.still_open.join(', '));
+    L.push('');
+    L.push('That list IS the remaining work on this person. Record each one with');
+    L.push('casefile_fact_upsert — a null needs status SEARCHED_NULL and its coverage,');
+    L.push('and a fact that cannot apply needs status NA, not silence.');
+  }
+
+  L.push('', rule(70), `SOURCES (${life.evidence.length})`, rule(70));
+  if (!life.evidence.length) {
+    L.push('(none attached yet — casefile_evidence)');
+  } else {
+    life.evidence.forEach((e, i) => {
+      L.push(`${i + 1}. ${e.source_title}${e.repository ? ' (' + e.repository + ')' : ''}${e.locator ? ', ' + e.locator : ''}${e.record_date ? ', ' + e.record_date : ''}.`);
+      L.push(`   Asserts: ${e.asserts}`);
+      if (e.quote) L.push(`   Transcription: "${e.quote}"`);
+      if (e.url) L.push(`   ${e.url}`);
+      L.push(`   Confidence: ${e.confidence}${e.accessed_at ? ' · accessed ' + e.accessed_at : ''}` +
+             (life.group.length > 1 ? ' · from case ' + e.from_case : ''), '');
+    });
+  }
+  return L.join('\n');
+}
+
+// Which person to work next, and how far each one has got.
+function renderRoster(c, rows) {
+  const L = [`PEOPLE IN ${c.title.toUpperCase()} — fact-schedule completeness`, ''];
+  L.push('  ' + 'PERSON'.padEnd(24) + 'FOUND  NULL   N/A  CONFL   OPEN   ');
+  for (const r of rows) {
+    L.push('  ' + r.person.padEnd(24) +
+      String(r.answered).padStart(5) + String(r.searched_null).padStart(6) +
+      String(r.not_applicable).padStart(6) + String(r.conflicted).padStart(7) +
+      String(r.open).padStart(7) + '   ' +
+      (r.exhausted ? 'EXHAUSTED' : r.display_name));
+  }
+  L.push('', 'A person is EXHAUSTED when nothing is open and nothing is conflicted.',
+         'casefile_life { case, person } for one life in full.');
+  return L.join('\n');
+}
+
 function renderExport(c) {
   const all = db.prepare('SELECT * FROM entries WHERE case_slug=? ORDER BY part_no ASC').all(c.slug);
   const L = [`FULL EXPORT — ${c.title} — ${new Date().toISOString()}`, ''];
@@ -282,4 +372,4 @@ function renderCitations(c, p) {
 }
 
 module.exports = { renderBrief, renderQueue, renderQueueItem, renderDoctrine,
-                   renderEntry, renderExport, renderCitations };
+                   renderEntry, renderExport, renderCitations, renderLife, renderRoster };

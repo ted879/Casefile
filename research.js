@@ -39,10 +39,25 @@ const PROBES = [
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
            '(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
 
-function hostAllowed(u) {
+// A case may widen the allowlist for itself. The built-in list is entirely
+// Central European because that is where this investigation started; a case
+// about someone who emigrated needs American or other repositories, and
+// hard-coding every case's sources into one global list makes it meaningless.
+// Widening is per case, recorded with who did it, and named in the reachability
+// output - visible, never silent.
+const caseHosts = slug => {
+  if (!slug) return [];
+  try {
+    return db.prepare(`SELECT host, probe_url, note, added_by FROM case_sources
+      WHERE case_slug=? ORDER BY host`).all(slug);
+  } catch { return []; }
+};
+
+function hostAllowed(u, slug) {
   let h;
   try { h = new URL(u).hostname.toLowerCase(); } catch { return false; }
-  return ALLOWED.some(a => h === a || h.endsWith('.' + a));
+  const list = ALLOWED.concat(caseHosts(slug).map(r => r.host));
+  return list.some(a => h === a || h.endsWith('.' + a));
 }
 
 async function get(url, timeoutMs) {
@@ -79,7 +94,7 @@ function toText(html, limit) {
     .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>').replace(/&quot;/g, '"')
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/[ \t ]+/g, ' ')
+    .replace(/[ \t ]+/g, ' ')
     .replace(/\n\s*\n\s*\n+/g, '\n\n')
     .trim();
   const lim = limit || 20000;
@@ -87,8 +102,15 @@ function toText(html, limit) {
   return s;
 }
 
-async function reachability() {
-  const rows = await Promise.all(PROBES.map(async ([name, url]) => {
+async function reachability(a) {
+  const slug = (a && a.case) || null;
+  const extra = caseHosts(slug).map(r => ({
+    name: (r.note ? r.note + ' (' + r.host + ')' : r.host) +
+          '  [case source' + (r.added_by ? ', added by ' + r.added_by : '') + ']',
+    url: r.probe_url || 'https://' + r.host + '/'
+  }));
+  const probes = PROBES.map(([name, url]) => ({ name, url })).concat(extra);
+  const rows = await Promise.all(probes.map(async ({ name, url }) => {
     const r = await get(url, 15000);
     return { name, url, r };
   }));
@@ -96,7 +118,11 @@ async function reachability() {
     : r.status === 0 ? 'NO CONNECTION'
     : r.status === 403 ? '403 BLOCKED' : String(r.status);
   const open = rows.filter(x => x.r.status === 200).map(x => x.name);
-  return 'REACHABILITY FROM THIS SERVER (not from your own browsing tool):\n\n' +
+  return 'REACHABILITY FROM THIS SERVER (not from your own browsing tool)' +
+    (slug
+      ? ', including the ' + extra.length + ' host(s) case "' + slug + '" has added'
+      : ' - pass case:"<slug>" to include that case\'s own added sources') +
+    ':\n\n' +
     rows.map(x =>
       verdict(x.r).padEnd(14) + String(x.r.ms + 'ms').padEnd(8) + x.name +
       '\n' + ' '.repeat(22) + x.url +
@@ -109,9 +135,16 @@ async function reachability() {
 
 async function fetchSource(a) {
   const url = a.url;
-  if (!hostAllowed(url)) {
+  if (!hostAllowed(url, a.case)) {
+    const extra = caseHosts(a.case).map(r => r.host);
     return 'REFUSED: ' + url + ' is not on the allowlist. This is not a general web proxy.\n' +
-           'Allowed hosts: ' + ALLOWED.join(', ');
+      'Allowed hosts: ' + ALLOWED.join(', ') +
+      (extra.length ? '\nPlus this case\'s own: ' + extra.join(', ') : '') +
+      (a.case
+        ? '\n\nIf this case genuinely needs that repository, add it with casefile_source_add ' +
+          '{ case: "' + a.case + '", host: "<hostname>", note: "<what it is>" } and fetch again.'
+        : '\n\nNOTE: you did not pass a case. A case can widen the allowlist for itself - ' +
+          'call again with case:"<slug>", and add the host with casefile_source_add if it is missing.');
   }
   const r = await get(url, 25000);
   if (!r.ok) {
@@ -204,12 +237,15 @@ const str = description => ({ type: 'string', description });
 
 const TOOLS = [
   { name: 'source_reachability',
-    description: 'Probe every repository this investigation uses and report the real HTTP status from THIS server. Run it once per session: a source that is 403 to one agent is often open to another, and several queue items are blocked only by access.',
-    inputSchema: { type: 'object', properties: {}, required: [] } },
+    description: 'Probe every repository this investigation uses and report the real HTTP status from THIS server. Run it once per session: a source that is 403 to one agent is often open to another, and several queue items are blocked only by access. Pass a case slug to include the extra sources that case has added.',
+    inputSchema: { type: 'object', properties: {
+      case: str('case slug — also probe the hosts this case has added for itself')
+    }, required: [] } },
   { name: 'source_fetch',
-    description: 'Fetch a page from one of the investigation\'s repositories through this server and return its text. Use it when your own browsing is blocked. Allowlisted hosts only. A failure is reported as an access result, never as an empty search.',
+    description: 'Fetch a page from one of the investigation\'s repositories through this server and return its text. Use it when your own browsing is blocked. Allowlisted hosts only — the built-in list plus whatever the case named in `case` has added. A failure is reported as an access result, never as an empty search.',
     inputSchema: { type: 'object', properties: {
       url: str('full URL; host must be allowlisted'),
+      case: str('case slug — required when the host is one this case added rather than a built-in'),
       mode: str("'text' (default, strips markup) or 'html'"),
       limit: { type: 'number', description: 'max characters, default 20000' }
     }, required: ['url'] } },
@@ -233,7 +269,7 @@ const TOOLS = [
 async function call(name, a) {
   a = a || {};
   switch (name) {
-    case 'source_reachability': return await reachability();
+    case 'source_reachability': return await reachability(a);
     case 'source_fetch':        return await fetchSource(a);
     case 'anno_page':           return annoPage(a);
     case 'identity_check':      return identityCheck(a);
@@ -241,4 +277,4 @@ async function call(name, a) {
   }
 }
 
-module.exports = { TOOLS, call, hostAllowed, ALLOWED, PROBES };
+module.exports = { TOOLS, call, hostAllowed, ALLOWED, PROBES, caseHosts };

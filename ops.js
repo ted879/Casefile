@@ -198,6 +198,144 @@ function search({ case: slug, q, limit }) {
   };
 }
 
+/* ------------------------------------------------------------ fact schedule */
+// The vocabulary is fixed and ordered, because that is what makes a life
+// summary comparable between people and what makes "exhausted" a countable
+// condition rather than a feeling.
+const FACT_ORDER = ['birth', 'name-change', 'religion', 'adoption', 'education',
+  'occupation', 'military', 'residence', 'emigration', 'arrival', 'naturalisation',
+  'marriage', 'child', 'divorce', 'death', 'burial', 'probate', 'other'];
+// Facts that can legitimately have several instances. For these, seq 0 is the
+// verdict on the category ("two children, both enumerated") and seq 1..n are the
+// instances themselves.
+const FACT_REPEATABLE = new Set(['name-change', 'education', 'occupation', 'military',
+  'residence', 'marriage', 'child', 'divorce', 'other', 'adoption']);
+const FACT_STATUS = ['UNSEARCHED', 'SEARCHED_NULL', 'FOUND', 'CONFLICTED', 'NA'];
+
+const getPerson = (slug, pslug) => {
+  const p = db.prepare('SELECT * FROM persons WHERE case_slug=? AND slug=?').get(slug, pslug);
+  if (!p) throw new Error('no such person: ' + pslug + ' in case ' + slug + ' — register them with casefile_person first');
+  return p;
+};
+
+function upsertFact(a) {
+  const slug = a.case, pslug = a.person;
+  if (!slug || !pslug || !a.fact) throw new Error('case, person and fact are required');
+  const fact = String(a.fact).toLowerCase().trim();
+  if (!FACT_ORDER.includes(fact))
+    throw new Error('fact must be one of: ' + FACT_ORDER.join(', '));
+  if (a.status && !FACT_STATUS.includes(a.status))
+    throw new Error('status must be one of: ' + FACT_STATUS.join(', '));
+  const seq = Number(a.seq) || 0;
+  if (seq > 0 && !FACT_REPEATABLE.has(fact))
+    throw new Error(fact + ' is a single fact — use seq 0. Repeatable facts: ' +
+      [...FACT_REPEATABLE].join(', '));
+  const p = getPerson(slug, pslug);
+  const ev = Array.isArray(a.evidence_ids) ? a.evidence_ids.join(',') : (a.evidence_ids ?? null);
+  const existing = db.prepare('SELECT * FROM facts WHERE case_slug=? AND person_id=? AND fact=? AND seq=?')
+    .get(slug, p.id, fact, seq);
+  if (existing) {
+    db.prepare(`UPDATE facts SET status=COALESCE(?,status), value=COALESCE(?,value),
+      date=COALESCE(?,date), place=COALESCE(?,place), confidence=COALESCE(?,confidence),
+      coverage=COALESCE(?,coverage), evidence_ids=COALESCE(?,evidence_ids),
+      entry_id=COALESCE(?,entry_id), updated_by=COALESCE(?,updated_by),
+      updated_at=datetime('now') WHERE id=?`)
+      .run(a.status ?? null, a.value ?? null, a.date ?? null, a.place ?? null,
+           a.confidence ?? null, a.coverage ?? null, ev, a.entry_id ?? null,
+           a.agent ?? null, existing.id);
+  } else {
+    db.prepare(`INSERT INTO facts (case_slug,person_id,fact,seq,status,value,date,place,
+        confidence,coverage,evidence_ids,entry_id,updated_by)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(slug, p.id, fact, seq, a.status || 'UNSEARCHED', a.value ?? null, a.date ?? null,
+           a.place ?? null, a.confidence ?? null, a.coverage ?? null, ev,
+           a.entry_id ?? null, a.agent ?? null);
+  }
+  return lifeProgress(slug, pslug);
+}
+
+// Every person in the same-identity group, across cases. global_id defaults to
+// the person's own slug, so an unlinked person is a group of one.
+function personGroup(slug, pslug, across) {
+  const p = getPerson(slug, pslug);
+  if (!across) return [p];
+  const gid = p.global_id || p.slug;
+  return db.prepare('SELECT * FROM persons WHERE COALESCE(global_id, slug)=? ORDER BY case_slug').all(gid);
+}
+
+function getLife({ case: slug, person: pslug, across_cases }) {
+  if (!slug || !pslug) throw new Error('case and person are required');
+  const group = personGroup(slug, pslug, across_cases);
+  const ids = group.map(p => p.id);
+  const qs = ids.map(() => '?').join(',');
+  const facts = db.prepare(`SELECT f.*, p.case_slug AS from_case FROM facts f
+    JOIN persons p ON p.id=f.person_id WHERE f.person_id IN (${qs})
+    ORDER BY f.fact, f.seq`).all(...ids);
+  const evidence = db.prepare(`SELECT e.*, p.case_slug AS from_case FROM evidence e
+    JOIN persons p ON p.id=e.person_id WHERE e.person_id IN (${qs})
+    ORDER BY e.record_date, e.id`).all(...ids);
+  return { person: group[0], group, facts, evidence };
+}
+
+// The stopping rule, as a number. A person is exhausted when open === 0.
+function lifeProgress(slug, pslug, across) {
+  const group = personGroup(slug, pslug, across);
+  const ids = group.map(p => p.id);
+  const qs = ids.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT fact, status FROM facts WHERE person_id IN (${qs}) AND seq=0`).all(...ids);
+  const byFact = new Map(rows.map(r => [r.fact, r.status]));
+  let answered = 0, nulls = 0, na = 0, conflicted = 0, open = 0;
+  const openList = [];
+  for (const f of FACT_ORDER) {
+    const st = byFact.get(f) || 'UNSEARCHED';
+    if (st === 'FOUND') answered++;
+    else if (st === 'SEARCHED_NULL') nulls++;
+    else if (st === 'NA') na++;
+    else if (st === 'CONFLICTED') { conflicted++; openList.push(f); }
+    else { open++; openList.push(f); }
+  }
+  return { person: group[0].slug, display_name: group[0].display_name,
+           cases: group.map(p => p.case_slug),
+           total: FACT_ORDER.length, answered, searched_null: nulls, not_applicable: na,
+           conflicted, open, still_open: openList,
+           exhausted: open === 0 && conflicted === 0 };
+}
+
+function lifeRoster(slug) {
+  if (!slug) throw new Error('case is required');
+  const people = db.prepare(`SELECT * FROM persons WHERE case_slug=? AND status!='excluded'
+    ORDER BY display_name`).all(slug);
+  return people.map(p => lifeProgress(slug, p.slug));
+}
+
+function linkPerson({ case: slug, person, to_case, to_person, agent }) {
+  if (!slug || !person || !to_case || !to_person)
+    throw new Error('case, person, to_case and to_person are all required');
+  const a = getPerson(slug, person), b = getPerson(to_case, to_person);
+  const gid = a.global_id || a.slug;
+  db.prepare('UPDATE persons SET global_id=? WHERE id IN (?,?)').run(gid, a.id, b.id);
+  const group = db.prepare('SELECT case_slug, slug, display_name FROM persons WHERE COALESCE(global_id, slug)=?').all(gid);
+  return { global_id: gid, linked_by: agent ?? null, group,
+    note: 'These records are now one person. casefile_life and casefile_citations with across_cases:true will gather evidence from all of them.' };
+}
+
+/* ---------------------------------------------------------- case sources */
+function addSource({ case: slug, host, probe_url, note, agent }) {
+  if (!slug || !host) throw new Error('case and host are required');
+  if (!getCase(slug)) throw new Error('no such case: ' + slug);
+  const h = String(host).toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').trim();
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(h)) throw new Error('host must be a bare hostname, e.g. catalog.archives.gov');
+  db.prepare(`INSERT INTO case_sources (case_slug,host,probe_url,note,added_by) VALUES (?,?,?,?,?)
+    ON CONFLICT(case_slug,host) DO UPDATE SET probe_url=COALESCE(excluded.probe_url,probe_url),
+    note=COALESCE(excluded.note,note)`)
+    .run(slug, h, probe_url ?? null, note ?? null, agent ?? null);
+  return { case: slug, host: h, sources: listSources(slug),
+    note: 'source_fetch will now accept this host when called with case:"' + slug + '". It is recorded with who added it, and source_reachability names it.' };
+}
+
+const listSources = slug =>
+  db.prepare('SELECT host, probe_url, note, added_by, added_at FROM case_sources WHERE case_slug=? ORDER BY host').all(slug);
+
 function upsertPerson(a) {
   const slug = a.case, pslug = a.person || a.slug;
   if (!slug || !pslug || !a.display_name) throw new Error('case, person and display_name are required');
@@ -211,10 +349,11 @@ function upsertPerson(a) {
     return { id: existing.id, person: pslug };
   }
   const info = db.prepare(`INSERT INTO persons
-    (case_slug,slug,display_name,aka,born,died,relation,status,tree_id,notes)
-    VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    (case_slug,slug,display_name,aka,born,died,relation,status,tree_id,notes,global_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
     .run(slug, pslug, a.display_name, a.aka ?? null, a.born ?? null, a.died ?? null,
-         a.relation ?? null, a.status || 'family', a.tree_id ?? null, a.notes ?? null);
+         a.relation ?? null, a.status || 'family', a.tree_id ?? null, a.notes ?? null,
+         a.global_id || pslug);
   return { id: info.lastInsertRowid, person: pslug };
 }
 
@@ -234,4 +373,7 @@ function addEvidence(b) {
 
 module.exports = { getCase, upsertCase, addEntry, getEntry, claim, upsertQueueItem,
                    getQueueItem, listSteps, upsertStep, setDoctrine, getDoctrine,
-                   addExhausted, getExhausted, search, upsertPerson, addEvidence };
+                   addExhausted, getExhausted, search, upsertPerson, addEvidence,
+                   upsertFact, getLife, lifeProgress, lifeRoster, linkPerson,
+                   addSource, listSources, getPerson,
+                   FACT_ORDER, FACT_REPEATABLE, FACT_STATUS };
