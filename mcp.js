@@ -5,22 +5,49 @@
 const express = require('express');
 const { db } = require('./db');
 const ops = require('./ops');
-const { renderBrief, renderQueue, renderExport, renderCitations } = require('./render');
+const { renderBrief, renderQueue, renderQueueItem, renderDoctrine,
+        renderEntry, renderExport, renderCitations } = require('./render');
 const research = require('./research');
 
 const PROTOCOL = '2025-06-18';
 const S = (props, required) => ({ type: 'object', properties: props, required: required || [] });
 const str = description => ({ type: 'string', description });
+const bool = description => ({ type: 'boolean', description });
+const num = description => ({ type: 'number', description });
 
 const TOOLS = [
   { name: 'casefile_brief',
-    description: 'Read the working brief for a case: the newest consolidation, every entry since, the live queue, and the do-not-repeat list. Call this FIRST, before any research.',
-    inputSchema: S({ case: str('case slug, e.g. susz') }, ['case']) },
+    description: 'Read the working brief for a case: the case doctrine (standing state), the newest consolidation, a headline index of every entry since, the newest entry in full, the live queue as titles, and the do-not-repeat list. Call this FIRST, before any research. The brief is BOUNDED so it always fits in one read — nothing is deleted, the detail is one call away via casefile_entry_read, casefile_queue_get, casefile_exhausted_read and casefile_search.',
+    inputSchema: S({
+      case: str('case slug, e.g. susz'),
+      full: bool('true returns the old unbounded brief — every entry in full, every queue detail, every note. Large. Default false.'),
+      since: num('only index entries after this entry number, instead of after the newest consolidation'),
+      full_entries: num('how many of the most recent entries to include in full. Default 1; 0 for a pure index.')
+    }, ['case']) },
+  { name: 'casefile_entry_read',
+    description: 'Read one entry in full by its number. The brief lists entries as headlines; this is how you open one.',
+    inputSchema: S({ case: str('case slug'), entry: num('the entry number, e.g. 69') }, ['case', 'entry']) },
+  { name: 'casefile_search',
+    description: 'Find which entry, do-not-repeat note or queue item already mentions something. Use it before searching a source, to check the work has not been done, and to locate the entry behind a headline.',
+    inputSchema: S({ case: str('case slug'), q: str('substring to look for, e.g. a name, a corpus, a URL stem'), limit: num('max rows per section, default 25') }, ['case', 'q']) },
   { name: 'casefile_queue',
-    description: 'Read just the queue for a case: open items, who holds a claimed one, and what is closed or retired.',
-    inputSchema: S({ case: str('case slug') }, ['case']) },
+    description: 'Read just the queue for a case: open items as titles with their step counts, who holds a claimed one, and what is closed or retired. Pass detail:true only if you really need every item\'s full text — in a live case that is very large.',
+    inputSchema: S({ case: str('case slug'), detail: bool('include each item\'s full detail and steps. Default false.') }, ['case']) },
+  { name: 'casefile_queue_get',
+    description: 'Read one queue item in full — its detail, its steps and their status. This is the companion to the titles-only queue listing.',
+    inputSchema: S({ case: str('case slug'), letter: str('item letter, e.g. CM') }, ['case', 'letter']) },
+  { name: 'casefile_step_upsert',
+    description: 'Add or update ONE step of a queue item, without resending the item\'s detail. This is how progress inside a multi-step item gets recorded: mark step (ii) done and leave the rest alone. Before this existed, runs wrote progress into the item TITLE because updating detail meant re-sending thousands of words.',
+    inputSchema: S({
+      case: str('case slug'), letter: str('queue item letter, e.g. CM'),
+      step: str('short step id, e.g. "i", "ii", "2b"'),
+      title: str('what the step is'),
+      status: str('open | done | blocked'),
+      note: str('what closed it, or what blocks it — carry the coverage'),
+      rank: num('lower sorts first'), agent: str('who updated it')
+    }, ['case', 'letter', 'step']) },
   { name: 'casefile_claim',
-    description: 'Atomically claim the first open queue item and mark it held by you. Do this BEFORE working, so a concurrent run cannot take the same item. Returns null if nothing is open in those lanes.',
+    description: 'Atomically claim the first open queue item and mark it held by you. Do this BEFORE working, so a concurrent run cannot take the same item. Returns the item with its steps, or null if nothing is open in those lanes.',
     inputSchema: S({
       case: str('case slug'),
       agent: str('who is claiming, e.g. Claude or ChatGPT'),
@@ -28,28 +55,43 @@ const TOOLS = [
       letter: str('claim one specific item by its letter instead of the first open one')
     }, ['case', 'agent']) },
   { name: 'casefile_entry',
-    description: 'Append an entry to the log. The number is assigned server-side and entries are immutable - a correction is a new entry, never an edit. End every run with this, even a run that found nothing. Use kind="run" for a run report or any bookkeeping; kind="consolidation" REPLACES the working brief and hides every earlier entry from it, so use it only when the entry carries the whole standing state.',
+    description: 'Append an entry to the log. The number is assigned server-side and entries are immutable - a correction is a new entry, never an edit. End every run with this, even a run that found nothing. Use kind="run" for a run report or any bookkeeping. Standing state — anchors, method rules, the access map — belongs in casefile_doctrine_set, NOT in a consolidation.',
     inputSchema: S({
       case: str('case slug'),
       agent: str('Claude, ChatGPT or Ted'),
       body: str('the entry: Checked (with coverage) / Found (with confidence labels) / Sources / Do Not Repeat / Next'),
       kind: str("'run' (default) or 'consolidation'"),
       claimed: str('the queue item text or letter this run worked'),
-      headline: str('one line summarising the run, shown in the read view')
+      headline: str('one line summarising the run — this is what the brief\'s entry index shows, so make it carry the finding')
     }, ['case', 'agent', 'body']) },
+  { name: 'casefile_doctrine',
+    description: 'Read the case doctrine — the standing state that every run needs: identity anchors, method rules, the access map, spelling and folding rules, instrument behaviour. Rendered in full at the top of every brief, so you rarely need to call this directly. Pass history:true to see superseded versions of a section.',
+    inputSchema: S({ case: str('case slug'), section: str('one section name, or omit for all'), history: bool('return superseded versions instead of current text') }, ['case']) },
+  { name: 'casefile_doctrine_set',
+    description: 'Create or replace one section of the case doctrine. This is where standing state lives now. It is mutable and always visible in the brief, so unlike a consolidation it CANNOT be hidden by a later entry — which has already happened once and cost a case its method rules. The previous text of a replaced section is kept and readable with casefile_doctrine { history: true }.',
+    inputSchema: S({
+      case: str('case slug'),
+      section: str('section name, e.g. anchors | method-rules | access-map | spelling | instruments | same-name-roster'),
+      body: str('the full text of this section — it REPLACES the section, so carry forward anything still standing'),
+      rank: num('lower sorts first in the brief'), agent: str('who wrote it')
+    }, ['case', 'section', 'body']) },
   { name: 'casefile_queue_upsert',
-    description: 'Add a queue item, re-rank one, or close/retire one. Use status done or retired with a resolution rather than deleting.',
+    description: 'Add a queue item, re-rank one, or close/retire one. Use status done or retired with a resolution rather than deleting. To record progress INSIDE an item use casefile_step_upsert — this tool replaces detail wholesale. Setting status back to open also clears a stale claim.',
     inputSchema: S({
       case: str('case slug'), letter: str('item letter, e.g. A2c'),
-      title: str('short imperative title'), detail: str('what to do and why'),
+      title: str('short imperative title — keep it short, progress goes in steps'),
+      detail: str('what to do and why'),
       lane: str('agent | browser | archival | waiting | low'),
-      rank: { type: 'number', description: 'lower sorts first' },
+      rank: num('lower sorts first'),
       status: str('open | claimed | done | retired'),
       resolution: str('why it closed')
     }, ['case', 'letter']) },
   { name: 'casefile_exhausted',
-    description: 'Record an avenue as exhausted so no future run repeats it. Add only what YOU closed this run.',
-    inputSchema: S({ case: str('case slug'), note: str('what is closed, and the coverage that closed it'), entry_id: { type: 'number' } }, ['case', 'note']) },
+    description: 'Record an avenue as exhausted so no future run repeats it. Add only what YOU closed this run. State the coverage: exact corpus, exact string, date range, results reported, results actually read.',
+    inputSchema: S({ case: str('case slug'), note: str('what is closed, and the coverage that closed it'), entry_id: num('') }, ['case', 'note']) },
+  { name: 'casefile_exhausted_read',
+    description: 'Read one do-not-repeat note in full. The brief trims these to keep itself bounded; this returns the whole coverage statement.',
+    inputSchema: S({ case: str('case slug'), id: num('the note id shown in the brief, e.g. 122') }, ['case', 'id']) },
   { name: 'casefile_person',
     description: 'Register or update a person - family or an excluded same-name individual. Evidence attaches to people.',
     inputSchema: S({
@@ -69,7 +111,7 @@ const TOOLS = [
       record_date: str('date of the record'), url: str(''), quote: str('verbatim transcription'),
       kind: str('burial | directory | newspaper | civil | school | register | other'),
       confidence: str('VERIFIED | STRONG LEAD | CANDIDATE | DISPROVEN'),
-      accessed_at: str('YYYY-MM-DD'), entry_id: { type: 'number' }
+      accessed_at: str('YYYY-MM-DD'), entry_id: num('')
     }, ['case', 'person', 'asserts', 'source_title']) },
   { name: 'casefile_citations',
     description: 'Get every source found for one person, formatted for pasting onto a genealogy profile.',
@@ -94,10 +136,40 @@ function mustCase(slug) {
 async function callTool(name, a) {
   a = a || {};
   switch (name) {
-    case 'casefile_brief':   return text(renderBrief(mustCase(a.case)));
-    case 'casefile_queue':   return text(renderQueue(mustCase(a.case)));
+    case 'casefile_brief':
+      return text(renderBrief(mustCase(a.case), { full: a.full, since: a.since, full_entries: a.full_entries }));
+    case 'casefile_queue':   return text(renderQueue(mustCase(a.case), { detail: a.detail }));
     case 'casefile_export':  return text(renderExport(mustCase(a.case)));
     case 'casefile_case':    return json(ops.upsertCase(a));
+    case 'casefile_entry_read': {
+      const c = mustCase(a.case);
+      return text(renderEntry(c, ops.getEntry(a)));
+    }
+    case 'casefile_queue_get': {
+      mustCase(a.case);
+      return text(renderQueueItem(ops.getQueueItem(a)));
+    }
+    case 'casefile_exhausted_read': {
+      mustCase(a.case);
+      const x = ops.getExhausted(a);
+      return text(`DO NOT REPEAT — note ${x.id}${x.entry_id ? ' (filed with entry id ' + x.entry_id + ')' : ''}, ${x.created_at}\n\n${x.note}`);
+    }
+    case 'casefile_search': { mustCase(a.case); return json(ops.search(a)); }
+    case 'casefile_step_upsert': { mustCase(a.case); return json(ops.upsertStep(a)); }
+    case 'casefile_doctrine': {
+      mustCase(a.case);
+      const rows = ops.getDoctrine(a);
+      if (a.history) return json(rows);
+      if (!rows.length) return text('(no doctrine set for this case yet — casefile_doctrine_set { case, section, body })');
+      return text(renderDoctrine(mustCase(a.case)));
+    }
+    case 'casefile_doctrine_set': {
+      mustCase(a.case);
+      const r = ops.setDoctrine(a);
+      return text(`Doctrine section "${r.section}" ${r.replaced ? 'REPLACED' : 'created'}.` +
+        (r.replaced ? ' The previous text is kept — casefile_doctrine { history: true }.' : '') +
+        '\nIt now renders at the top of every brief for this case and cannot be hidden by a consolidation.');
+    }
     case 'casefile_entry': {
       const r = ops.addEntry(a);
       let msg = `Filed as entry ${r.part_no}. Immutable - a correction is a new entry.`;
@@ -108,10 +180,13 @@ async function callTool(name, a) {
           'and anything standing that it does not carry becomes invisible to every future ' +
           'run. This has already happened once: a migration filed as a consolidation ' +
           'silently dropped the instrument notes and access map.\n' +
-          'CHECK NOW with casefile_brief that your entry carries everything still standing ' +
-          '- identity anchors, spelling and folding rules, the access map, instrument ' +
-          'behaviour, the standing method rules. If it does not, file another entry that ' +
-          'merges them back in. A run report or a bookkeeping entry should be kind="run".';
+          'STANDING STATE SHOULD NOT BE IN HERE AT ALL. Identity anchors, method rules, ' +
+          'the access map, spelling and folding rules and instrument behaviour belong in ' +
+          'casefile_doctrine_set, which is mutable and is rendered at the top of every ' +
+          'brief where no later entry can hide it. Move anything of that kind out of this ' +
+          'consolidation now.\n' +
+          'CHECK NOW with casefile_brief that nothing standing has gone missing. A run ' +
+          'report or a bookkeeping entry should be kind="run".';
       }
       return text(msg);
     }
@@ -145,7 +220,7 @@ async function handle(msg) {
     return { jsonrpc: '2.0', id, result: {
       protocolVersion: (msg.params && msg.params.protocolVersion) || PROTOCOL,
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: 'casefile', version: '1.0.0' }
+      serverInfo: { name: 'casefile', version: '1.1.0' }
     } };
   }
   if (m === 'ping') return { jsonrpc: '2.0', id, result: {} };
