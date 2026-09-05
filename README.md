@@ -60,6 +60,45 @@ A queue item's progress lives in `queue_steps`, one row per step, so marking ste
 existed, runs wrote progress into the item's *title*, and the titles became
 paragraphs.
 
+## The fact schedule
+
+A case answers a question. A **person** has a life, and a life has a fixed set of
+answerable facts — birth, name-change, religion, adoption, education, occupation,
+military, residence, emigration, arrival, naturalisation, marriage, child,
+divorce, death, burial, probate, other.
+
+`casefile_fact_upsert` records one of them with the coverage that settled it.
+`casefile_life` renders the result: every fact with its status and value, the
+coverage behind each null, every source attached to the person, and — last — the
+facts nobody has looked for yet.
+
+That last list is the point. It makes **exhausted** a countable condition instead
+of a feeling: a person is exhausted when no fact is UNSEARCHED and none is
+CONFLICTED. A null belongs in the schedule with `SEARCHED_NULL` and its coverage;
+a fact that cannot apply belongs there as `NA`. Silence is neither.
+
+`seq 0` is the fact itself, or the verdict on a repeatable category ("two
+children, both enumerated"); `seq 1..n` are the instances. `casefile_life` with
+a case but no person gives the roster: who is registered and how far each life
+has got.
+
+## One person, several cases
+
+A person can be the subject of their own case and a collateral in another.
+`casefile_person_link` declares that two records are one human. Evidence keeps
+living in the case that found it; `casefile_life` and `casefile_citations` with
+`across_cases: true` gather it all. Without the link, the same person becomes two
+records that drift apart.
+
+## Per-case sources
+
+The built-in `source_fetch` allowlist is entirely Central European, because that
+is where this investigation started. A case about someone who emigrated needs
+different repositories. `casefile_source_add` widens the allowlist **for one
+case**, records who added the host and why, and `source_reachability` names those
+hosts in its report — so a widened allowlist is visible rather than silent. Pass
+`case` to `source_fetch` for it to honour them.
+
 ## Endpoints
 
 Read (no auth, unguessable key in the query string):
@@ -71,6 +110,8 @@ Read (no auth, unguessable key in the query string):
     GET /c/:case/doctrine?k=KEY         the standing state
     GET /c/:case/entry/:n?k=KEY         one entry in full
     GET /c/:case/item/:letter?k=KEY     one queue item with its steps
+    GET /c/:case/lives?k=KEY            fact-schedule completeness per person
+    GET /c/:case/life/:person?k=KEY     one life in full (&across=1 spans cases)
     GET /c/:case/export?k=KEY           full text dump, for archiving
 
 Write (Bearer token):
@@ -83,6 +124,9 @@ Write (Bearer token):
     POST /api/exhausted           record a closed avenue with its coverage
     POST /api/person              register a person
     POST /api/evidence            attach citable evidence to a person
+    POST /api/fact                record one fact of one person's life
+    POST /api/link                declare two person records to be one person
+    POST /api/source              add a source host to this case's allowlist
 
 Human:
 
@@ -96,4 +140,5 @@ Human:
 The same operations are exposed as MCP tools at `POST /mcp` (Bearer token).
 `casefile_brief` is the entry point; `casefile_entry_read`, `casefile_queue_get`,
 `casefile_exhausted_read` and `casefile_search` are how a run opens anything the
-brief lists but does not print in full.
+brief lists but does not print in full; `casefile_life` is the per-person view
+and the definition of when a person is finished.
