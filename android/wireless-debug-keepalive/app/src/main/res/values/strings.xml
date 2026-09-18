@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Wireless Debug KeepAlive</string>
+    <string name="app_subtitle">Keeps your own Wireless Debugging preference switched on. Everything stays on this phone.</string>
+
+    <string name="label_wireless_debugging">Wireless Debugging:</string>
+    <string name="label_keep_alive">Keep Wireless Debugging On:</string>
+    <string name="label_permission">WRITE_SECURE_SETTINGS:</string>
+    <string name="label_wifi">Wi-Fi:</string>
+    <string name="label_service">Monitoring service:</string>
+
+    <string name="value_unknown">—</string>
+    <string name="value_on">ON</string>
+    <string name="value_off">OFF</string>
+    <string name="value_granted">GRANTED</string>
+    <string name="value_not_granted">NOT GRANTED</string>
+    <string name="value_connected">CONNECTED</string>
+    <string name="value_not_connected">NOT CONNECTED</string>
+    <string name="value_running">RUNNING</string>
+    <string name="value_stopped">STOPPED</string>
+
+    <string name="last_restore_never">No restore performed yet.</string>
+    <string name="last_restore_format">Last restore: %1$s (%2$d total this session)</string>
+
+    <string name="banner_suspended">Android repeatedly disabled Wireless Debugging. Automatic retry is paused — see the log below for the timestamps.</string>
+    <string name="banner_no_permission">WRITE_SECURE_SETTINGS is not granted, so nothing can be restored. Run the grant command below over ADB.</string>
+
+    <string name="switch_keep_alive">Keep Wireless Debugging On</string>
+
+    <string name="btn_enable_now">Enable Wireless Debugging Now</string>
+    <string name="btn_developer_options">Open Developer Options</string>
+    <string name="btn_start_monitoring">Start Monitoring</string>
+    <string name="btn_stop_monitoring">Stop Monitoring</string>
+    <string name="btn_battery_settings">Battery / app settings for this app</string>
+    <string name="btn_reset_limit">Resume automatic retry</string>
+    <string name="btn_copy_grant">Copy grant command</string>
+    <string name="btn_copy_revoke">Copy revoke command</string>
+    <string name="btn_copy_log">Copy Log</string>
+    <string name="btn_clear_log">Clear</string>
+
+    <string name="permission_heading">One-time ADB permission</string>
+    <string name="permission_help_missing">Connect the phone to a computer with ADB and run this once. The app cannot and does not try to grant it any other way.</string>
+    <string name="permission_help_granted">Granted. To take it away again, run the revoke command.</string>
+    <string name="grant_command">adb shell pm grant com.tdm.wirelessdebugkeepalive android.permission.WRITE_SECURE_SETTINGS</string>
+    <string name="revoke_command">adb shell pm revoke com.tdm.wirelessdebugkeepalive android.permission.WRITE_SECURE_SETTINGS</string>
+
+    <string name="log_heading">Diagnostic log</string>
+    <string name="log_empty">Nothing logged yet.</string>
+
+    <string name="toast_copied">Copied to clipboard</string>
+    <string name="toast_log_copied">Log copied to clipboard</string>
+    <string name="toast_no_developer_options">Could not open Developer Options on this device. Open Settings &gt; Developer options &gt; Wireless debugging by hand.</string>
+    <string name="toast_no_permission">WRITE_SECURE_SETTINGS is not granted yet.</string>
+    <string name="toast_no_wifi">Wi-Fi is not connected.</string>
+    <string name="toast_already_on">Wireless Debugging is already on.</string>
+    <string name="toast_restored">Wireless Debugging turned back on.</string>
+    <string name="toast_restore_failed">Could not turn Wireless Debugging on — see the log.</string>
+    <string name="toast_monitoring_started">Monitoring started.</string>
+    <string name="toast_monitoring_stopped">Monitoring stopped.</string>
+    <string name="toast_notifications_needed">Allow notifications so the monitoring service can keep running.</string>
+
+    <string name="notification_channel_name">Monitoring</string>
+    <string name="notification_channel_description">Ongoing, silent notification shown while Wireless Debugging is being monitored.</string>
+    <string name="notification_text_monitoring">Wireless Debug KeepAlive is monitoring Wireless Debugging</string>
+    <string name="notification_text_suspended">Paused: Android repeatedly disabled Wireless Debugging</string>
+    <string name="notification_text_no_permission">Waiting for WRITE_SECURE_SETTINGS to be granted over ADB</string>
+
+    <string name="tile_label">Wireless Debug</string>
+    <string name="tile_subtitle_on">On</string>
+    <string name="tile_subtitle_off">Off</string>
+    <string name="tile_subtitle_no_permission">No permission</string>
+    <string name="tile_subtitle_no_wifi">No Wi-Fi</string>
+</resources>
