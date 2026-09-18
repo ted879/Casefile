@@ -28,6 +28,15 @@ object RestoreEngine {
 
     fun attemptsInWindow(): Int = guard.attemptsInWindow(now())
 
+    /**
+     * Records that a restore held. Keeps a run of normal Wi-Fi reconnects from
+     * counting towards the "Android keeps disabling this" rate limit.
+     */
+    fun confirmRestoreStuck() {
+        guard.forgiveLastAttempt()
+        KeepAliveState.autoRetrySuspended = false
+    }
+
     /** Clears the rate limit. Only called for an explicit user action. */
     fun resetGuard(context: Context) {
         guard.reset()

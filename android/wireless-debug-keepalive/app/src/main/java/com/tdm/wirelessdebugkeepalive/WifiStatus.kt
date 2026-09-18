@@ -14,6 +14,9 @@ import android.net.NetworkRequest
 object WifiStatus {
 
     fun isWifiConnected(context: Context): Boolean {
+        // The service's own callback knows a Wi-Fi network has arrived before
+        // activeNetwork switches over to it.
+        if (KeepAliveState.serviceRunning && KeepAliveState.wifiNetworkCount > 0) return true
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return false
         return try {
             val active = cm.activeNetwork ?: return false

@@ -24,6 +24,15 @@ object KeepAliveState {
             if (changed) notifyChanged()
         }
 
+    /**
+     * Wi-Fi networks the monitoring service's NetworkCallback currently holds.
+     * ConnectivityManager.activeNetwork can still name cellular for a moment after
+     * Wi-Fi associates, so this is the earlier and more accurate signal while the
+     * service is running. Reset to 0 when it stops.
+     */
+    @Volatile
+    var wifiNetworkCount: Int = 0
+
     @Volatile
     var lastRestoreAtMs: Long = 0L
 

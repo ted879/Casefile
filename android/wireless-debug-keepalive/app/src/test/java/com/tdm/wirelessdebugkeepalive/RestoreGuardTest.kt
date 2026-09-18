@@ -89,3 +89,60 @@ class RestoreGuardTest {
         assertEquals("the guard must cap the number of writes", 3, writes)
     }
 }
+
+class RestoreGuardForgivenessTest {
+
+    private fun guard() = RestoreGuard(
+        maxAttemptsInWindow = 3,
+        windowMs = 60_000L,
+        quietPeriodMs = 5_000L,
+        suspensionMs = 600_000L,
+    )
+
+    @Test
+    fun `a restore that sticks does not count toward the limit`() {
+        val g = guard()
+        g.recordAttempt(0L); g.forgiveLastAttempt()
+        g.recordAttempt(10_000L); g.forgiveLastAttempt()
+        g.recordAttempt(20_000L); g.forgiveLastAttempt()
+        assertEquals(0, g.attemptsInWindow(20_000L))
+        assertFalse(g.isSuspended(20_000L))
+    }
+
+    @Test
+    fun `many ordinary Wi-Fi reconnects never exhaust the retry budget`() {
+        val g = guard()
+        var now = 0L
+        var writes = 0
+        // 20 Wi-Fi reconnects, each restore holding afterwards.
+        repeat(20) {
+            if (g.evaluate(now) == RestoreGuard.Decision.ALLOW) {
+                g.recordAttempt(now)
+                g.forgiveLastAttempt()   // the 3s stick-check confirmed it held
+                writes++
+            }
+            now += 10_000L
+        }
+        assertEquals("every reconnect must still be restorable", 20, writes)
+        assertFalse(g.isSuspended(now))
+    }
+
+    @Test
+    fun `reverted restores still trip the limit`() {
+        val g = guard()
+        // No forgiveness: the framework undoes each write.
+        assertFalse(g.recordAttempt(0L))
+        assertFalse(g.recordAttempt(10_000L))
+        assertTrue(g.recordAttempt(20_000L))
+        assertTrue(g.isSuspended(21_000L))
+    }
+
+    @Test
+    fun `a stuck restore after failures clears the suspension`() {
+        val g = guard()
+        g.recordAttempt(0L); g.recordAttempt(10_000L); g.recordAttempt(20_000L)
+        assertTrue(g.isSuspended(21_000L))
+        g.forgiveLastAttempt()
+        assertFalse(g.isSuspended(21_000L))
+    }
+}

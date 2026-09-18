@@ -118,6 +118,10 @@ sleep 3; adb shell settings get global adb_wifi_enabled   # 1 = it sticks, 0 = f
 
 - After a successful restore there is a 5-second quiet period, so the setting-change callback
   our own write provokes cannot bounce into another write.
+- **A restore that holds does not count towards the limit.** Three seconds after each
+  restore the app re-reads the value; if it is still 1, that attempt is dropped from the
+  rate-limit window. Losing and regaining Wi-Fi all day can therefore never exhaust the
+  retry budget — only writes the framework actually undoes accumulate.
 - If Android forces the value back to 0 **5 times within 5 minutes**, automatic retry is
   suspended for 30 minutes and the app shows:
   *"Android repeatedly disabled Wireless Debugging."* Every attempt is timestamped in the log

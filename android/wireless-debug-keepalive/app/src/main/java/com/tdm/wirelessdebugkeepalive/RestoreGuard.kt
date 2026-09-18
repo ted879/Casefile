@@ -52,6 +52,17 @@ class RestoreGuard(
         return false
     }
 
+    /**
+     * Called once a restore has been observed to hold. A write the framework left alone
+     * is not evidence of a fight, so it is dropped from the rate-limit window: ordinary
+     * Wi-Fi reconnects must never exhaust the retry budget.
+     */
+    @Synchronized
+    fun forgiveLastAttempt() {
+        if (attempts.isNotEmpty()) attempts.removeLast()
+        suspendedUntilMs = 0L
+    }
+
     @Synchronized
     fun isSuspended(nowMs: Long): Boolean = nowMs < suspendedUntilMs
 

@@ -148,6 +148,7 @@ class KeepAliveService : Service() {
             }
         }
         networkCallback = null
+        KeepAliveState.wifiNetworkCount = 0
     }
 
     private fun registerSettingsObserver() {
@@ -170,11 +171,14 @@ class KeepAliveService : Service() {
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                KeepAliveState.wifiNetworkCount += 1
                 log.add(LogStore.Category.WIFI, "Wi-Fi connected")
                 scheduleRestoreCheck("Wi-Fi became available")
             }
 
             override fun onLost(network: Network) {
+                KeepAliveState.wifiNetworkCount =
+                    (KeepAliveState.wifiNetworkCount - 1).coerceAtLeast(0)
                 log.add(LogStore.Category.WIFI, "Wi-Fi disconnected")
                 handler.post { updateNotification() }
             }
@@ -235,6 +239,7 @@ class KeepAliveService : Service() {
     private val stickCheckRunnable = Runnable {
         val value = SecureSettings.readAdbWifiEnabled(this)
         if (value == 1) {
+            RestoreEngine.confirmRestoreStuck()
             log.add(LogStore.Category.RESTORE, "Confirmed: still ON 3s after the restore")
         } else {
             val wifi = WifiStatus.isWifiConnected(this)
