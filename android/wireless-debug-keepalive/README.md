@@ -23,13 +23,8 @@ attempt to obtain it any other way.
 
 ## Build
 
-`gradle/wrapper/gradle-wrapper.jar` is binary. It is present in the distributed archive but is
-not committed to git; if you are working from a git checkout, restore it once (Android Studio
-does this for you when you open the project):
-
 ```bash
 cd android/wireless-debug-keepalive
-gradle wrapper --gradle-version 8.14.3   # one time only
 ./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```
 

@@ -6,5 +6,3 @@ local.properties
 .kotlin/
 captures/
 
-# Binary; regenerate with: gradle wrapper --gradle-version 8.14.3
-gradle/wrapper/gradle-wrapper.jar
