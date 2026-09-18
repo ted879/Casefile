@@ -25,6 +25,15 @@
             android:text="@string/app_subtitle"
             android:textAppearance="?attr/textAppearanceBodySmall" />
 
+        <TextView
+            android:id="@+id/textVersion"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textAppearance="?attr/textAppearanceLabelSmall"
+            android:textIsSelectable="true"
+            android:text="@string/version_format" />
+
         <!-- status -->
 
         <com.google.android.material.card.MaterialCardView

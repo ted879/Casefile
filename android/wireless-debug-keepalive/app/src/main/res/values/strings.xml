@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Wireless Debug KeepAlive</string>
+    <string name="version_format">Version %1$s (build %2$d)</string>
     <string name="app_subtitle">Keeps your own Wireless Debugging preference switched on. Everything stays on this phone.</string>
 
     <string name="label_wireless_debugging">Wireless Debugging:</string>

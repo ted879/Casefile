@@ -52,6 +52,8 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        binding.textVersion.text = versionLabel()
+
         binding.switchKeepAlive.setOnCheckedChangeListener { _, checked ->
             if (updatingUi) return@setOnCheckedChangeListener
             onKeepAliveToggled(checked)
@@ -307,6 +309,16 @@ class MainActivity : AppCompatActivity() {
         RestoreEngine.Outcome.NO_PERMISSION -> getString(R.string.toast_no_permission)
         RestoreEngine.Outcome.NO_WIFI -> getString(R.string.toast_no_wifi)
         else -> getString(R.string.toast_restore_failed)
+    }
+
+    /** So "which build is on the phone?" is answerable at a glance. */
+    private fun versionLabel(): String = try {
+        @Suppress("DEPRECATION")
+        val info = packageManager.getPackageInfo(packageName, 0)
+        getString(R.string.version_format, info.versionName ?: "?", info.longVersionCode)
+    } catch (t: Throwable) {
+        log.exception("reading the package version", t)
+        ""
     }
 
     private fun toast(message: String) {
