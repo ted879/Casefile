@@ -36,8 +36,13 @@ jobs:
         with:
           gradle-version: "8.14.3"
 
+      # packages: '' is required — the action's default is "tools platform-tools",
+      # and the legacy "tools" package no longer exists in Google's SDK repository,
+      # so the default makes sdkmanager exit 1.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ""
 
       - name: Install SDK packages
         run: |
@@ -61,7 +66,8 @@ jobs:
           APK=app/build/outputs/apk/debug/app-debug.apk
           ls -l "$APK"
           echo "sha256: $(sha256sum "$APK" | cut -d' ' -f1)"
-          "$ANDROID_HOME"/build-tools/36.0.0/aapt2 dump badging "$APK" | head -20 || true
+          AAPT2=$(ls -1 "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$AAPT2" ]; then "$AAPT2" dump badging "$APK" | head -20 || true; fi
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
