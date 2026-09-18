@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.database.ContentObserver
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -172,7 +173,14 @@ class KeepAliveService : Service() {
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 KeepAliveState.wifiNetworkCount += 1
-                log.add(LogStore.Category.WIFI, "Wi-Fi connected")
+                val hasInternet = getSystemService(ConnectivityManager::class.java)
+                    ?.getNetworkCapabilities(network)
+                    ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+                log.add(
+                    LogStore.Category.WIFI,
+                    "Wi-Fi connected" +
+                        if (hasInternet) "" else " (no internet - projection or local-only link)"
+                )
                 scheduleRestoreCheck("Wi-Fi became available")
             }
 

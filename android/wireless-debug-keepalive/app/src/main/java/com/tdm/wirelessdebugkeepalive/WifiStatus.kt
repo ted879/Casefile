@@ -8,8 +8,9 @@ import android.net.NetworkRequest
 /**
  * Wi-Fi reachability, read through ConnectivityManager / NetworkCapabilities.
  *
- * Wireless debugging only listens on a Wi-Fi interface, so there is no point in
- * restoring the setting while the phone is on mobile data only.
+ * Wireless Debugging listens on a Wi-Fi interface. That includes Wi-Fi links with no
+ * internet at all, such as an Android Auto projection link, so neither the check nor
+ * the network request may insist on internet connectivity.
  */
 object WifiStatus {
 
@@ -19,19 +20,36 @@ object WifiStatus {
         if (KeepAliveState.serviceRunning && KeepAliveState.wifiNetworkCount > 0) return true
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return false
         return try {
-            val active = cm.activeNetwork ?: return false
-            val caps = cm.getNetworkCapabilities(active) ?: return false
             // A VPN network's capabilities carry the underlying transports, so a VPN
             // riding on Wi-Fi still reports TRANSPORT_WIFI here.
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+            val active = cm.activeNetwork
+            if (active != null && cm.getNetworkCapabilities(active)
+                    ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+            ) {
+                return true
+            }
+            // activeNetwork names whichever network carries traffic, which stays on
+            // cellular for a Wi-Fi link that has no internet - an Android Auto
+            // projection link, a printer, a camera. Wireless Debugging runs over those
+            // perfectly well, so look at every network rather than just the default one.
+            @Suppress("DEPRECATION")
+            cm.allNetworks.any { network ->
+                cm.getNetworkCapabilities(network)
+                    ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+            }
         } catch (t: Throwable) {
             LogStore.get(context).exception("reading Wi-Fi state", t)
             false
         }
     }
 
+    /**
+     * Deliberately does NOT require NET_CAPABILITY_INTERNET. An Android Auto
+     * projection link, or any other Wi-Fi network without internet, still carries
+     * Wireless Debugging - and requiring internet meant the callback never fired
+     * for those, so connecting to the truck went unnoticed.
+     */
     fun wifiRequest(): NetworkRequest = NetworkRequest.Builder()
         .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         .build()
 }

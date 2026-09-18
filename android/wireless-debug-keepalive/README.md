@@ -87,9 +87,24 @@ so the test is safe to run over a cable.
 | Trigger | Behaviour |
 |---|---|
 | `ContentObserver` on `adb_wifi_enabled` | On a 1 → 0 transition: wait ~1 s, re-read, and only write `1` if it is *still* 0. No polling loop. |
-| `ConnectivityManager.NetworkCallback` (Wi-Fi) | On Wi-Fi becoming available: if KeepAlive is on, permission is granted and the value is 0, restore it. |
+| `ConnectivityManager.NetworkCallback` (Wi-Fi) | On any Wi-Fi network becoming available: if KeepAlive is on, permission is granted and the value is 0, restore it. |
 | 15-minute heartbeat (in-service) and 15-minute `WorkManager` watchdog | A *read*; writes only if the value has actually gone to 0. Also restarts the service if it was killed. |
 | `BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` | Resumes monitoring if the master switch was on. |
+
+### Wi-Fi links with no internet
+
+The network request deliberately does **not** require `NET_CAPABILITY_INTERNET`, and the
+Wi-Fi check does not rely on `ConnectivityManager.activeNetwork`.
+
+An **Android Auto wireless projection** link (SSID like `PROJ9ae46b`) is a Wi-Fi association
+with no internet: the phone keeps using mobile data, so `activeNetwork` stays on cellular and
+an internet-requiring network request never fires. Wireless Debugging runs over that link
+perfectly well, so treating it as "no Wi-Fi" was wrong. The same applies to printers,
+cameras and other local-only networks. The log now distinguishes them:
+
+```
+… [WIFI]  Wi-Fi connected (no internet - projection or local-only link)
+```
 
 ### Restoring without Wi-Fi
 
