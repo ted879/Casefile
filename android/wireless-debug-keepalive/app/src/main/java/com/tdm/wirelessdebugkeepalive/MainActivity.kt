@@ -57,13 +57,21 @@ class MainActivity : AppCompatActivity() {
             onKeepAliveToggled(checked)
         }
 
+        binding.switchRestoreWithoutWifi.setOnCheckedChangeListener { _, checked ->
+            if (updatingUi) return@setOnCheckedChangeListener
+            Prefs.setRestoreWithoutWifiEnabled(this, checked)
+            log.add(
+                LogStore.Category.USER,
+                "Restore even without Wi-Fi switched " + (if (checked) "ON" else "OFF")
+            )
+        }
+
         binding.btnEnableNow.setOnClickListener {
             log.add(LogStore.Category.USER, "\"Enable Wireless Debugging Now\" pressed")
             val outcome = RestoreEngine.attemptRestore(
                 this,
                 "user pressed Enable Wireless Debugging Now",
                 force = true,
-                requireWifi = false,
             )
             toast(describe(outcome))
             refresh()
@@ -249,6 +257,7 @@ class MainActivity : AppCompatActivity() {
 
         updatingUi = true
         binding.switchKeepAlive.isChecked = keepAlive
+        binding.switchRestoreWithoutWifi.isChecked = Prefs.isRestoreWithoutWifiEnabled(this)
         updatingUi = false
 
         binding.textPermissionHelp.setText(

@@ -86,7 +86,7 @@ class KeepAliveService : Service() {
             }
             ACTION_RESTORE_NOW -> {
                 startMonitoring(intent == null)
-                RestoreEngine.attemptRestore(this, "user requested", force = true, requireWifi = false)
+                RestoreEngine.attemptRestore(this, "user requested", force = true)
             }
             ACTION_RESET_LIMIT -> {
                 RestoreEngine.resetGuard(this)
@@ -137,6 +137,7 @@ class KeepAliveService : Service() {
     private fun stopMonitoring() {
         handler.removeCallbacks(restoreRunnable)
         handler.removeCallbacks(heartbeatRunnable)
+        handler.removeCallbacks(stickCheckRunnable)
         settingsObserver?.let {
             runCatching { contentResolver.unregisterContentObserver(it) }
         }
@@ -215,9 +216,34 @@ class KeepAliveService : Service() {
 
     private fun runRestoreCheck(reason: String) {
         pendingReason = null
-        RestoreEngine.attemptRestore(this, reason)
+        val outcome = RestoreEngine.attemptRestore(this, reason)
         lastSeenValue = SecureSettings.readAdbWifiEnabled(this)
+        if (outcome == RestoreEngine.Outcome.RESTORED) scheduleStickCheck()
         updateNotification()
+    }
+
+    /**
+     * A restore write can be accepted and then undone by the framework moments later —
+     * that is what happens when Wireless Debugging is turned on with no Wi-Fi. Record
+     * whether the value actually stuck, so the log says why rather than just retrying.
+     */
+    private fun scheduleStickCheck() {
+        handler.removeCallbacks(stickCheckRunnable)
+        handler.postDelayed(stickCheckRunnable, STICK_CHECK_DELAY_MS)
+    }
+
+    private val stickCheckRunnable = Runnable {
+        val value = SecureSettings.readAdbWifiEnabled(this)
+        if (value == 1) {
+            log.add(LogStore.Category.RESTORE, "Confirmed: still ON 3s after the restore")
+        } else {
+            val wifi = WifiStatus.isWifiConnected(this)
+            log.add(
+                LogStore.Category.RESTORE,
+                "Android reverted adb_wifi_enabled to 0 within 3s of the restore" +
+                    if (!wifi) " - no Wi-Fi is connected, which is the usual cause." else "."
+            )
+        }
     }
 
     // ------------------------------------------------------------- notification
@@ -302,6 +328,9 @@ class KeepAliveService : Service() {
 
         /** How long to let the system settle before re-reading the value. */
         const val SETTLE_DELAY_MS = 1_000L
+
+        /** How long to wait before checking that a restore actually stuck. */
+        const val STICK_CHECK_DELAY_MS = 3_000L
 
         /** Low-frequency safety net; deliberately far from a polling loop. */
         const val HEARTBEAT_INTERVAL_MS = 15L * 60L * 1000L

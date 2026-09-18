@@ -46,7 +46,7 @@ class KeepAliveTileService : TileService() {
             return
         }
 
-        if (!WifiStatus.isWifiConnected(this)) {
+        if (!WifiStatus.isWifiConnected(this) && !Prefs.isRestoreWithoutWifiEnabled(this)) {
             log.add(LogStore.Category.TILE, "Tile tap ignored: Wi-Fi is not connected")
             toast(getString(R.string.toast_no_wifi))
             updateTile()
@@ -57,7 +57,6 @@ class KeepAliveTileService : TileService() {
             this,
             "Quick Settings tile tap",
             force = true,
-            requireWifi = true,
         )
         toast(
             when (outcome) {

@@ -38,13 +38,11 @@ object RestoreEngine {
     /**
      * @param reason free text recorded in the diagnostic log
      * @param force  an explicit user action: ignores the master switch and the rate limit
-     * @param requireWifi automatic paths and the tile only act while Wi-Fi is connected
      */
     fun attemptRestore(
         context: Context,
         reason: String,
         force: Boolean = false,
-        requireWifi: Boolean = true,
     ): Outcome {
         val log = LogStore.get(context)
         val appContext = context.applicationContext
@@ -67,9 +65,16 @@ object RestoreEngine {
             return Outcome.ALREADY_ON
         }
 
-        if (requireWifi && !WifiStatus.isWifiConnected(appContext)) {
-            log.add(LogStore.Category.RESTORE, "Skipped ($reason): Wi-Fi is not connected")
-            return Outcome.NO_WIFI
+        if (!WifiStatus.isWifiConnected(appContext)) {
+            if (!force && !Prefs.isRestoreWithoutWifiEnabled(appContext)) {
+                log.add(LogStore.Category.RESTORE, "Skipped ($reason): Wi-Fi is not connected")
+                return Outcome.NO_WIFI
+            }
+            log.add(
+                LogStore.Category.WIFI,
+                "Wi-Fi is not connected - attempting the restore anyway. Android normally " +
+                    "clears adb_wifi_enabled without Wi-Fi, so this write may be reverted."
+            )
         }
 
         val now = now()

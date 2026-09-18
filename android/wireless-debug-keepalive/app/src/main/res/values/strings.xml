@@ -26,6 +26,8 @@
     <string name="banner_no_permission">WRITE_SECURE_SETTINGS is not granted, so nothing can be restored. Run the grant command below over ADB.</string>
 
     <string name="switch_keep_alive">Keep Wireless Debugging On</string>
+    <string name="switch_restore_without_wifi">Restore even without Wi-Fi</string>
+    <string name="switch_restore_without_wifi_help">Android normally clears Wireless Debugging when Wi-Fi drops, and may undo the write straight away. Leave this on to try regardless; the log records whether it stuck. If it turns into a losing fight the retry limit pauses it automatically.</string>
 
     <string name="btn_enable_now">Enable Wireless Debugging Now</string>
     <string name="btn_developer_options">Open Developer Options</string>

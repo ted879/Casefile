@@ -87,9 +87,32 @@ so the test is safe to run over a cable.
 | Trigger | Behaviour |
 |---|---|
 | `ContentObserver` on `adb_wifi_enabled` | On a 1 → 0 transition: wait ~1 s, re-read, and only write `1` if it is *still* 0. No polling loop. |
-| `ConnectivityManager.NetworkCallback` (Wi-Fi) | On Wi-Fi becoming available: if KeepAlive is on, permission is granted and the value is 0, restore it. Does nothing while there is no Wi-Fi. |
+| `ConnectivityManager.NetworkCallback` (Wi-Fi) | On Wi-Fi becoming available: if KeepAlive is on, permission is granted and the value is 0, restore it. |
 | 15-minute heartbeat (in-service) and 15-minute `WorkManager` watchdog | A *read*; writes only if the value has actually gone to 0. Also restarts the service if it was killed. |
 | `BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` | Resumes monitoring if the master switch was on. |
+
+### Restoring without Wi-Fi
+
+Android's own `AdbDebuggingManager` clears `adb_wifi_enabled` when the Wi-Fi network goes
+away, so a write made with no Wi-Fi connected may be reverted by the framework within a
+second. That is usually *why* Wireless Debugging turns itself off.
+
+The **Restore even without Wi-Fi** switch (on by default) makes the app try regardless.
+Three seconds after every restore the app re-reads the value and logs whether it stuck:
+
+```
+… [RESTORE]  Confirmed: still ON 3s after the restore
+… [RESTORE]  Android reverted adb_wifi_enabled to 0 within 3s of the restore - no Wi-Fi is connected, which is the usual cause.
+```
+
+If it turns into a losing fight, the rate limit below pauses it rather than letting the app
+and the framework trade writes indefinitely. To check what your device does, from a PC with
+Wi-Fi off:
+
+```bash
+adb shell settings put global adb_wifi_enabled 1
+sleep 3; adb shell settings get global adb_wifi_enabled   # 1 = it sticks, 0 = framework reverted it
+```
 
 ### Loop safety
 

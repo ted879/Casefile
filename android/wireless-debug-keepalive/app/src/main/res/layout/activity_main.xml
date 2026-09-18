@@ -170,6 +170,22 @@
             android:minHeight="48dp"
             android:text="@string/switch_keep_alive" />
 
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/switchRestoreWithoutWifi"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:minHeight="48dp"
+            android:text="@string/switch_restore_without_wifi" />
+
+        <TextView
+            android:id="@+id/textRestoreWithoutWifiHelp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:text="@string/switch_restore_without_wifi_help" />
+
         <!-- actions -->
 
         <com.google.android.material.button.MaterialButton
