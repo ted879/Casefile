@@ -44,12 +44,22 @@ object WifiStatus {
     }
 
     /**
-     * Deliberately does NOT require NET_CAPABILITY_INTERNET. An Android Auto
-     * projection link, or any other Wi-Fi network without internet, still carries
-     * Wireless Debugging - and requiring internet meant the callback never fired
-     * for those, so connecting to the truck went unnoticed.
+     * Matches ANY Wi-Fi network, with no capability filtering whatsoever.
+     *
+     * NetworkRequest.Builder() applies default filters - NOT_RESTRICTED, TRUSTED,
+     * NOT_VPN - and an Android Auto projection link does not necessarily satisfy
+     * them, so onAvailable never fired for it even after the INTERNET requirement
+     * was dropped. clearCapabilities() removes those defaults, which is what makes
+     * the truck link actually trigger a restore rather than merely show up in the
+     * status row.
      */
     fun wifiRequest(): NetworkRequest = NetworkRequest.Builder()
+        .clearCapabilities()
+        .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+        .build()
+
+    /** Fallback if the permissive request above is refused. */
+    fun conservativeWifiRequest(): NetworkRequest = NetworkRequest.Builder()
         .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
         .build()
 }

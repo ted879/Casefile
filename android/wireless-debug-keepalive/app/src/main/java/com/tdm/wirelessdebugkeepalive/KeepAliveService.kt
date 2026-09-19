@@ -50,8 +50,12 @@ class KeepAliveService : Service() {
             // A read, not a write: only act when the value has actually gone to 0.
             val value = SecureSettings.readAdbWifiEnabled(this@KeepAliveService)
             if (value != lastSeenValue) onAdbWifiSettingChanged()
-            if (value == 0) runRestoreCheck("periodic re-check")
-            handler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
+            // Only the Wi-Fi case writes here. Without Wi-Fi the write is just
+            // reverted, and the event-driven path already covers that if opted in.
+            if (value == 0 && WifiStatus.isWifiConnected(this@KeepAliveService)) {
+                runRestoreCheck("periodic re-check")
+            }
+            handler.postDelayed(this, heartbeatDelayFor(value))
         }
     }
 
@@ -135,6 +139,9 @@ class KeepAliveService : Service() {
         if (lastSeenValue == 0) scheduleRestoreCheck("monitoring started while off")
     }
 
+    private fun heartbeatDelayFor(adbWifiValue: Int): Long =
+        if (adbWifiValue == 0) HEARTBEAT_WHEN_OFF_MS else HEARTBEAT_INTERVAL_MS
+
     private fun stopMonitoring() {
         handler.removeCallbacks(restoreRunnable)
         handler.removeCallbacks(heartbeatRunnable)
@@ -195,7 +202,16 @@ class KeepAliveService : Service() {
             cm.registerNetworkCallback(WifiStatus.wifiRequest(), callback, handler)
             networkCallback = callback
         } catch (t: Throwable) {
-            log.exception("registering the Wi-Fi network callback", t)
+            // A request with no capability filters can be refused; fall back rather
+            // than end up watching nothing at all.
+            log.exception("registering the unfiltered Wi-Fi callback", t)
+            try {
+                cm.registerNetworkCallback(WifiStatus.conservativeWifiRequest(), callback, handler)
+                networkCallback = callback
+                log.add(LogStore.Category.WIFI, "Using the filtered Wi-Fi callback instead")
+            } catch (t2: Throwable) {
+                log.exception("registering the Wi-Fi network callback", t2)
+            }
         }
     }
 
@@ -211,6 +227,10 @@ class KeepAliveService : Service() {
         )
         handler.post { updateNotification() }
         if (value == 0) {
+            // Switch to the fast cadence straight away rather than waiting out the
+            // slow one: this is the window where a Wi-Fi link may appear unseen.
+            handler.removeCallbacks(heartbeatRunnable)
+            handler.postDelayed(heartbeatRunnable, HEARTBEAT_WHEN_OFF_MS)
             scheduleRestoreCheck("Wireless Debugging was turned off")
         }
     }
@@ -352,6 +372,13 @@ class KeepAliveService : Service() {
 
         /** How long to let the system settle before re-reading the value. */
         const val SETTLE_DELAY_MS = 1_000L
+
+        /**
+         * While Wireless Debugging is off, re-read every minute. A read is cheap and
+         * this bounds how long a Wi-Fi link that fired no callback - an Android Auto
+         * projection link is the case in point - can go unnoticed.
+         */
+        const val HEARTBEAT_WHEN_OFF_MS = 60L * 1000L
 
         /** Just past the guard's quiet period, so the retry is allowed through. */
         const val QUIET_PERIOD_RETRY_MS = RestoreGuard.DEFAULT_QUIET_PERIOD_MS + 1_000L
