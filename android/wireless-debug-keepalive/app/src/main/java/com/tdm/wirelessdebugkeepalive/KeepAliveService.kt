@@ -230,7 +230,18 @@ class KeepAliveService : Service() {
         pendingReason = null
         val outcome = RestoreEngine.attemptRestore(this, reason)
         lastSeenValue = SecureSettings.readAdbWifiEnabled(this)
-        if (outcome == RestoreEngine.Outcome.RESTORED) scheduleStickCheck()
+        when (outcome) {
+            RestoreEngine.Outcome.RESTORED -> scheduleStickCheck()
+            // A skip for the quiet period used to be the end of it: nothing re-triggered
+            // the check once the window expired, so the setting could sit at 0 until the
+            // next system event or the 15-minute heartbeat. Queue the retry explicitly.
+            RestoreEngine.Outcome.DEBOUNCED -> {
+                pendingReason = "retry after the post-restore quiet period"
+                handler.removeCallbacks(restoreRunnable)
+                handler.postDelayed(restoreRunnable, QUIET_PERIOD_RETRY_MS)
+            }
+            else -> Unit
+        }
         updateNotification()
     }
 
@@ -341,6 +352,9 @@ class KeepAliveService : Service() {
 
         /** How long to let the system settle before re-reading the value. */
         const val SETTLE_DELAY_MS = 1_000L
+
+        /** Just past the guard's quiet period, so the retry is allowed through. */
+        const val QUIET_PERIOD_RETRY_MS = RestoreGuard.DEFAULT_QUIET_PERIOD_MS + 1_000L
 
         /** How long to wait before checking that a restore actually stuck. */
         const val STICK_CHECK_DELAY_MS = 3_000L
